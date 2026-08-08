@@ -37,9 +37,16 @@ services/api/*.sqlite3
 .env.*.local
 !.env.example
 
+# TypeScript
+*.tsbuildinfo
+
+# Local data (root)
+.data/
+
 # Editor / OS
 .vscode/
 .idea/
+.continue/
 .DS_Store
 Thumbs.db
 
