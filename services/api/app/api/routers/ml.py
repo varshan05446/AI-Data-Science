@@ -31,6 +31,7 @@ from app.services.data.profiling import profile_dataframe
 from app.services.dataset_io import read_dataset_dataframe
 from app.services.ml.artifacts import load_artifact, predict_with_artifact, save_artifact
 from app.services.ml.automl import AutoMLError, train_and_evaluate
+from app.services.ml.discovery import scan_target_signals
 from app.services.ml.jobs import compute_config_hash, launch_training_job, reconcile_job
 from app.services.ml.objectives import build_objectives, dataset_ml_summary
 from app.services.ml.registry import available_models, optional_capabilities
@@ -92,6 +93,26 @@ def model_config(
         objectives=build_objectives(report),
         summary=dataset_ml_summary(report),
     )
+
+
+@router.get(
+    "/datasets/{dataset_id}/models/signal-scan",
+    response_model=list[dict[str, Any]],
+)
+def signal_scan(
+    dataset: Dataset = Depends(get_owned_dataset),
+    db: Session = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """Rank every viable target by its achievable prediction score.
+
+    Runs a fast, capped AutoML evaluation per target column and reports the
+    honest ceiling (hold-out + cross-validated). Targets whose high accuracy
+    comes from a derived-column tautology (e.g. ``unit_price ≈ revenue / units``)
+    are flagged ``leaky`` so users can tell a real signal from an arithmetic
+    artifact. Synchronous is fine: one cheap RandomForest per target.
+    """
+    df = _read_df(dataset)
+    return scan_target_signals(df)
 
 
 @router.post(

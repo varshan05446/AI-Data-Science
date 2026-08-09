@@ -96,6 +96,42 @@ project and upload the bundled sample file at
 
 ---
 
+## High-accuracy model building (>97%)
+
+The Model Studio can reliably reach **>97% prediction accuracy** — when the data
+carries signal. Two facts established by the project's own AutoML engine drive
+the design:
+
+1. **>97% is a property of the data + recipe, not the tool.** On a noisy, small
+   dataset (e.g. the 405-row `sample_sales.csv`) every honest model tops out at
+   ~30–53%; on a dataset with real signal the same engine reaches 97%+.
+2. **Derived columns fake accuracy.** A target like `revenue` is often an exact
+   arithmetic combination of other columns (`units × unit_price`), so it scores
+   near 100% — but that is a tautology, not a business insight. The engine's
+   linear leakage detector (|corr| ≥ 0.995) misses these, so a dedicated scan
+   flags them.
+
+Three features make the honest ceiling easy to reach:
+
+- **Signal Discovery Scan** (Model Studio → Step 1): ranks every viable column
+  by its achievable, cross-validated score and marks derived-column tautologies
+  as *leaky* with the driving expression (e.g. `units × unit_price`). Pick a
+  real-signal target straight from the results table.
+- **Optimize toggle in Manual Model Building**: enables Optuna hyperparameter
+  tuning (default 25 trials, 5–100) in the manual workflow — the same tuning the
+  Automated workflow already uses.
+- **Seeded >97% demo dataset**: `python -m app.seed` creates *High-Value
+  Classification Demo* (2,000 rows; `high_value` target from a nonlinear rule +
+  1% label noise). Train it in the Automated workflow (or Manual + Optimize) and
+  it reaches **~97% accuracy** with Gradient Boosting.
+
+Reproduce the analysis with
+[`scripts/ml_accuracy_analysis.py`](scripts/ml_accuracy_analysis.py), which
+generates the demo CSV and trains it with the manual recipe (boosted models +
+Optuna + 5-fold CV + SMOTE): Gradient Boosting accuracy **0.9725**, AUC **0.996**.
+
+---
+
 ## Optional: run with Postgres + MinIO (Docker)
 ```bash
 cp .env.example .env

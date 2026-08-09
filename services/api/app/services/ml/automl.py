@@ -357,6 +357,7 @@ def train_and_evaluate(
     fitting: dict[str, Any] | None = None,
     capture: dict[str, Any] | None = None,
     progress_cb: ProgressCallback | None = None,
+    minimal: bool = False,
 ) -> dict[str, Any]:
     """Train every candidate model and return a ranked leaderboard + winner.
 
@@ -722,11 +723,21 @@ def train_and_evaluate(
     best = scored[0]
     best_pipe = fitted[best["key"]]
     best_params = best.get("best_params")
-    notify(0.88, "explain", f"Best model: {best['label']}. Generating explanations…")
-    importance = _permutation_importance(
-        permutation_importance, best_pipe, X_test, y_test, features_used
-    )
-    y_pred_best = best_pipe.predict(X_test)
+
+    # ``minimal`` mode skips the heavy explanation block (permutation importance,
+    # learning curve, SHAP, confusion/ROC/residuals, advisor) so a signal scan
+    # can evaluate many targets quickly. The leaderboard, CV, leakage, input
+    # schema and confidence are kept, so results stay comparable to a full run.
+    if not minimal:
+        notify(0.88, "explain", f"Best model: {best['label']}. Generating explanations…")
+        importance = _permutation_importance(
+            permutation_importance, best_pipe, X_test, y_test, features_used
+        )
+        y_pred_best = best_pipe.predict(X_test)
+    else:
+        importance = []
+        y_pred_best = None
+        notify(0.88, "explain", f"Best model: {best['label']}. Finalizing…")
 
     result: dict[str, Any] = {
         "task": task,
@@ -748,16 +759,17 @@ def train_and_evaluate(
             "params": diagnostics.model_params(best_pipe),
             "tuned": bool(best.get("tuned")),
             "best_params": best_params or {},
-            "learning_curve": diagnostics.learning_curve_points(
-                lambda: builders[best["key"]](best_params), task, X, y
-            ),
-            "prediction_distribution": diagnostics.prediction_distribution(
-                y_test, y_pred_best, task
-            ),
         },
     }
+    if not minimal:
+        result["best"]["learning_curve"] = diagnostics.learning_curve_points(
+            lambda: builders[best["key"]](best_params), task, X, y
+        )
+        result["best"]["prediction_distribution"] = diagnostics.prediction_distribution(
+            y_test, y_pred_best, task
+        )
 
-    # Train-vs-test overfitting gap on the primary metric.
+    # Train-vs-test overfitting gap on the primary metric (cheap; feeds confidence).
     y_train_pred = best_pipe.predict(X_train)
     if task == "classification":
         train_metrics = _classification_metrics(y_train, y_train_pred, None, labels)
@@ -770,29 +782,31 @@ def train_and_evaluate(
         best["metrics"].get(primary, 0.0), task, result["best"]["overfit"], best.get("cv_std")
     )
 
-    shap_block = diagnostics.shap_importance(best_pipe, X_test, features_used)
-    if shap_block:
-        result["best"]["shap"] = shap_block
-
     if task == "classification":
         result["classes"] = [str(c) for c in labels]
-        result["best"]["confusion_matrix"] = _confusion(best_pipe, X_test, y_test, labels)
-        result["best"]["classification_report"] = _classification_report(
-            y_test, y_pred_best, labels
-        )
-        result["best"]["roc_curve"] = diagnostics.roc_curve_points(
-            best_pipe, X_test, y_test, labels
-        )
-    else:
-        resid = np.asarray(y_test, dtype=float) - np.asarray(y_pred_best, dtype=float)
-        result["best"]["residuals"] = {
-            "mean": _py(round(float(resid.mean()), 4)),
-            "std": _py(round(float(resid.std()), 4)),
-        }
-        result["best"]["residual_series"] = diagnostics.residual_series(y_test, y_pred_best)
 
-    result["advisor"] = advisor.build_advice(result)
-    notify(0.99, "explain", "Explanations ready. Finalizing results…")
+    if not minimal:
+        shap_block = diagnostics.shap_importance(best_pipe, X_test, features_used)
+        if shap_block:
+            result["best"]["shap"] = shap_block
+        if task == "classification":
+            result["best"]["confusion_matrix"] = _confusion(best_pipe, X_test, y_test, labels)
+            result["best"]["classification_report"] = _classification_report(
+                y_test, y_pred_best, labels
+            )
+            result["best"]["roc_curve"] = diagnostics.roc_curve_points(
+                best_pipe, X_test, y_test, labels
+            )
+        else:
+            resid = np.asarray(y_test, dtype=float) - np.asarray(y_pred_best, dtype=float)
+            result["best"]["residuals"] = {
+                "mean": _py(round(float(resid.mean()), 4)),
+                "std": _py(round(float(resid.std()), 4)),
+            }
+            result["best"]["residual_series"] = diagnostics.residual_series(y_test, y_pred_best)
+
+        result["advisor"] = advisor.build_advice(result)
+        notify(0.99, "explain", "Explanations ready. Finalizing results…")
     if capture is not None:
         capture["pipeline"] = best_pipe
     return result

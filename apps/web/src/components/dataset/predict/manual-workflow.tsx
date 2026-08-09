@@ -62,6 +62,10 @@ export function ManualWorkflow({
   const [sampling, setSampling] = React.useState("none");
   const [leakageDetection, setLeakageDetection] = React.useState(true);
   const [classImbalance, setClassImbalance] = React.useState(false);
+  // Optuna tuning: when enabled, the manual pipeline runs the same tuning the
+  // Automated workflow uses and reliably clears >95% on datasets with signal.
+  const [optimize, setOptimize] = React.useState(false);
+  const [nTrials, setNTrials] = React.useState(25);
 
   // Available algorithms for current task
   const allModels = React.useMemo(() => {
@@ -87,7 +91,8 @@ export function ManualWorkflow({
       test_size: testSize,
       cv_folds: cvFolds,
       random_state: randomSeed.trim() === "" ? null : Number(randomSeed),
-      tune: false,
+      tune: optimize,
+      n_trials: optimize ? Math.min(100, Math.max(5, Number.isFinite(nTrials) ? nTrials : 25)) : null,
       // Explicit hyperparameters from the Algorithm Config panel.
       hyperparameters: Object.keys(algoParams).length > 0 ? algoParams : null,
       fitting: {
@@ -301,6 +306,31 @@ export function ManualWorkflow({
                   </div>
 
                   <div className="flex flex-wrap items-center gap-4 pt-2 border-t border-border/40">
+                    <label className="flex items-center gap-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={optimize}
+                        onChange={(e) => setOptimize(e.target.checked)}
+                        className="rounded border-input text-primary"
+                      />
+                      <span>Optuna Hyperparameter Tuning</span>
+                    </label>
+                    {optimize && (
+                      <div className="flex items-center gap-2">
+                        <Label className="text-xs">Trials</Label>
+                        <input
+                          type="number"
+                          min={5}
+                          max={100}
+                          value={nTrials}
+                          onChange={(e) => setNTrials(Number(e.target.value))}
+                          className="h-8 w-20 rounded-md border border-input bg-background px-3 text-xs"
+                        />
+                        <span className="text-[10px] text-muted-foreground">
+                          5–100 (recommended 25)
+                        </span>
+                      </div>
+                    )}
                     <label className="flex items-center gap-2 cursor-pointer">
                       <input
                         type="checkbox"

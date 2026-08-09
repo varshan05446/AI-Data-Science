@@ -35,19 +35,17 @@ export function ModelDetailModal({
   result,
   onRetrain,
 }: ModelDetailModalProps) {
-  if (!entry || !result) return null;
-
-  const best = result?.best ?? {};
-  const isBest = entry.key === best.key;
-  const target = result.target;
-  const task = result.task;
+  const best = React.useMemo(() => result?.best ?? {}, [result]);
+  const isBest = entry?.key === best.key;
+  const target = result?.target;
+  const task = result?.task;
 
   const [tweakParams, setTweakParams] = React.useState<Record<string, any>>(
-    entry.best_params ?? best.best_params ?? {}
+    entry?.best_params ?? best.best_params ?? {}
   );
 
   React.useEffect(() => {
-    setTweakParams(entry.best_params ?? best.best_params ?? {});
+    setTweakParams(entry?.best_params ?? best.best_params ?? {});
   }, [entry, best]);
 
   const stripPrefix = (k: string) => k.replace(/^model__/, "");
@@ -62,7 +60,7 @@ export function ModelDetailModal({
   }, [best]);
   const tunedParams = React.useMemo(() => {
     const out: Record<string, any> = {};
-    for (const [k, v] of Object.entries(entry.best_params ?? {})) out[stripPrefix(k)] = v;
+    for (const [k, v] of Object.entries(entry?.best_params ?? {})) out[stripPrefix(k)] = v;
     return out;
   }, [entry]);
   const tweakState = React.useMemo(() => {
@@ -81,6 +79,8 @@ export function ModelDetailModal({
     }
     setTweakParams((prev) => ({ ...prev, [key]: parsed }));
   }
+
+  if (!entry || !result) return null;
 
   return (
     <Dialog

@@ -135,3 +135,51 @@ def test_train_persists_artifact_and_playground_predicts(client):
         headers=headers,
     )
     assert resp.status_code == 200, resp.text
+
+
+def test_scan_target_signals_ranks_and_flags_derived_leak():
+    from app.services.ml.discovery import scan_target_signals
+
+    df = _churn_frame()
+    # A tautology the linear leakage detector (|corr| >= 0.995) misses: the exact
+    # product of two other columns. The scan must flag it as a derived-column leak.
+    df["annual_value"] = df["tenure"] * df["monthly_charges"]
+
+    entries = scan_target_signals(df)
+
+    by_target = {e["target"]: e for e in entries}
+    assert "churn" in by_target
+    assert "annual_value" in by_target
+
+    # The planted tautology is flagged with its driving expression.
+    leak = by_target["annual_value"]
+    assert leak["leaky"] is True
+    assert "tenure" in leak["driver"]
+    assert "monthly_charges" in leak["driver"]
+    assert leak["note"] and "tautology" in leak["note"]
+
+    # The genuine learnable target stays a "real signal".
+    assert by_target["churn"]["leaky"] is False
+
+    # Best-first ordering by achievable score (no per-target errors here).
+    scores = [e["test_score"] for e in entries]
+    assert scores == sorted(scores, reverse=True)
+
+
+def test_signal_scan_endpoint(client):
+    headers = _auth_headers(client)
+    dataset_id = _upload(client, headers, _churn_frame())
+
+    resp = client.get(
+        f"/api/v1/datasets/{dataset_id}/models/signal-scan", headers=headers
+    )
+    assert resp.status_code == 200, resp.text
+    entries = resp.json()
+    assert isinstance(entries, list) and entries
+    by_target = {e["target"]: e for e in entries}
+    assert "churn" in by_target
+    # JSON-safe shape with the fields the UI table renders.
+    for entry in entries:
+        assert {"target", "task", "primary_metric", "test_score", "best_model", "leaky"} <= set(entry)
+    # The probable-id column is never offered as a target.
+    assert all(e["target"] != "customer_id" for e in entries)

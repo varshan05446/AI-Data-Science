@@ -27,6 +27,7 @@ import { useSession } from "next-auth/react";
 import { FeatureTargetPanel, recommendFeatures } from "@/components/dataset/predict/feature-target-panel";
 import { WorkflowSelection, type WorkflowType } from "@/components/dataset/predict/workflow-selection";
 import { ManualWorkflow } from "@/components/dataset/predict/manual-workflow";
+import { SignalScanPanel } from "@/components/dataset/predict/signal-scan-panel";
 import { AutomatedWorkflow } from "@/components/dataset/predict/automated-workflow";
 import { ModelResultView } from "@/components/dataset/predict/model-result";
 import { Playground } from "@/components/dataset/predict/playground";
@@ -53,6 +54,9 @@ interface ManualTrainPayload {
   test_size: number;
   cv_folds: number;
   random_state: number | null;
+  /** Optuna tuning on/off (the "Optimize" toggle in the Model Fitting panel). */
+  tune?: boolean;
+  n_trials?: number | null;
   hyperparameters?: Record<string, unknown> | null;
   ensemble?: Record<string, unknown> | null;
   fitting?: Record<string, unknown> | null;
@@ -202,6 +206,13 @@ export function ModelStudioTab({ datasetId }: { datasetId: string }) {
 
   const currentStep = isPending ? 2 : result ? 3 : target ? 1 : 0;
 
+  // Pick a target from the Signal Discovery scan: set it as the Y column and
+  // auto-recommend its features, exactly like the default target seeding.
+  function handlePickTarget(column: string) {
+    setTarget(column);
+    if (config) setFeatures(recommendFeatures(config.columns, column));
+  }
+
   function runManualTraining(payload: ManualTrainPayload) {
     if (!target) {
       toast.error("Please select a Target Variable (Y) in Step 1.");
@@ -215,7 +226,8 @@ export function ModelStudioTab({ datasetId }: { datasetId: string }) {
       model_keys: payload.model_keys,
       test_size: payload.test_size,
       cv_folds: payload.cv_folds,
-      tune: false,
+      tune: payload.tune === true,
+      n_trials: payload.n_trials ?? 25,
       random_state: payload.random_state,
       hyperparameters: payload.hyperparameters ?? null,
       ensemble: payload.ensemble ?? null,
@@ -310,6 +322,13 @@ export function ModelStudioTab({ datasetId }: { datasetId: string }) {
           />
         </CardContent>
       </Card>
+
+      {/* Signal Discovery Scan: rank targets by achievable score, flag tautologies */}
+      <SignalScanPanel
+        datasetId={datasetId}
+        token={token}
+        onPickTarget={handlePickTarget}
+      />
 
       {/* Primary Workflow Selection Cards */}
       <WorkflowSelection selected={workflow} onSelect={setWorkflow} />
