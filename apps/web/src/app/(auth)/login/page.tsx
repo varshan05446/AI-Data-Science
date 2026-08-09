@@ -25,8 +25,8 @@ function LoginForm() {
   const router = useRouter();
   const params = useSearchParams();
   const callbackUrl = params.get("callbackUrl") || "/dashboard";
-"  const [loading, setLoading] = React.useState(false);
-  const [showPassword, setShowPassword] = React.useState(false);"
+  const [loading, setLoading] = React.useState(false);
+  const [showPassword, setShowPassword] = React.useState(false);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
