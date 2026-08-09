@@ -147,13 +147,27 @@ def _register_optional() -> None:
     """Register advanced libraries only when importable (graceful skip)."""
     if has_library("xgboost"):
         def _xgb_clf() -> Any:
+            from sklearn.pipeline import Pipeline
+            from sklearn.preprocessing import LabelEncoder
             from xgboost import XGBClassifier
 
-            return XGBClassifier(eval_metric="logloss", tree_method="hist")
+            class _XGBStrLabelClassifier(XGBClassifier):
+                """XGBoost wrapper that tolerates string class labels (XGB 3.x)."""
+                def fit(self, X, y, **kw):
+                    from sklearn.preprocessing import LabelEncoder
+                    self._le = LabelEncoder()
+                    return super().fit(X, self._le.fit_transform(y), **kw)
+
+                def predict(self, X, **kw):
+                    return self._le.inverse_transform(super().predict(X, **kw))
+
+                def predict_proba(self, X, **kw):
+                    return super().predict_proba(X, **kw)
+
+            return _XGBStrLabelClassifier(eval_metric="logloss", tree_method="hist")
 
         def _xgb_reg() -> Any:
             from xgboost import XGBRegressor
-
             return XGBRegressor(tree_method="hist")
 
         register(ModelSpec("xgboost_clf", "XGBoost", "classification", _xgb_clf,

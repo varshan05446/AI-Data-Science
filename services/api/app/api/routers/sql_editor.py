@@ -1,6 +1,7 @@
 """SQL Editor endpoint: execute SQL queries against dataset DataFrames."""
 from __future__ import annotations
 
+import re
 import sqlite3
 import time
 
@@ -19,6 +20,12 @@ from app.services.storage import get_storage
 router = APIRouter(tags=["sql-editor"])
 
 
+def _slug(name: str) -> str:
+    """Turn a dataset name into a safe SQLite table name."""
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", name).strip("_").lower()
+    return slug or "dataset"
+
+
 def _load_dataset_df(dataset: Dataset) -> pd.DataFrame:
     """Load a dataset's raw file back into a DataFrame for SQL queries."""
     storage = get_storage()
@@ -27,60 +34,61 @@ def _load_dataset_df(dataset: Dataset) -> pd.DataFrame:
     return load_dataframe(raw, source_type)
 
 
-@router.post("/datasets/{dataset_id}/sql/execute", response_model=SqlExecuteResponse)
-def execute_sql(
-    dataset_id: str,
+@router.post("/sql/execute", response_model=SqlExecuteResponse)
+def execute_sql_multi(
     body: SqlExecuteRequest,
     auth: CurrentAuth = Depends(get_current_auth),
     db: Session = Depends(get_db),
 ) -> SqlExecuteResponse:
-    """Execute a SQL query against a dataset using an in-memory SQLite engine."""
-    dataset = db.scalar(
-        select(Dataset).where(
-            Dataset.id == dataset_id, Dataset.workspace_id == auth.workspace_id
-        )
-    )
-    if dataset is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Dataset not found")
+    """Execute SQL against one or more datasets loaded as named tables."""
+    if not body.dataset_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Provide at least one dataset_id")
 
-    if not body.query or not body.query.strip():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Query cannot be empty")
+    datasets = db.scalars(
+        select(Dataset).where(
+            Dataset.id.in_(body.dataset_ids),
+            Dataset.workspace_id == auth.workspace_id,
+        )
+    ).all()
+
+    found_ids = {d.id for d in datasets}
+    missing = set(body.dataset_ids) - found_ids
+    if missing:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Datasets not found: {missing}")
 
     t0 = time.time()
     try:
-        df = _load_dataset_df(dataset)
-        # Load into an in-memory SQLite database for SQL execution
         mem_db = sqlite3.connect(":memory:")
-        df.to_sql("dataset", mem_db, index=False, if_exists="replace")
+        # Deduplicate table names
+        used: dict[str, int] = {}
+        for dataset in datasets:
+            base = _slug(dataset.name)
+            count = used.get(base, 0)
+            table_name = base if count == 0 else f"{base}_{count}"
+            used[base] = count + 1
+            df = _load_dataset_df(dataset)
+            df.to_sql(table_name, mem_db, index=False, if_exists="replace")
 
-        query = body.query.strip()
-        result_df = pd.read_sql_query(query, mem_db)
+        result_df = pd.read_sql_query(body.query.strip(), mem_db)
         mem_db.close()
 
         elapsed_ms = int((time.time() - t0) * 1000)
-        columns = list(result_df.columns)
-        rows = result_df.head(body.limit or 1000).to_dict(orient="records")
+        rows = result_df.head(body.limit).to_dict(orient="records")
         row_count = len(result_df)
-
         return SqlExecuteResponse(
-            columns=columns,
+            columns=list(result_df.columns),
             rows=rows,
             row_count=row_count,
-            truncated=row_count > (body.limit or 1000),
+            truncated=row_count > body.limit,
             execution_ms=elapsed_ms,
             error=None,
         )
     except Exception as exc:
         elapsed_ms = int((time.time() - t0) * 1000)
         return SqlExecuteResponse(
-            columns=[],
-            rows=[],
-            row_count=0,
-            truncated=False,
-            execution_ms=elapsed_ms,
-            error=str(exc),
+            columns=[], rows=[], row_count=0, truncated=False,
+            execution_ms=elapsed_ms, error=str(exc),
         )
-
 
 @router.get("/sql/datasets", response_model=list[dict])
 def list_sql_datasets(

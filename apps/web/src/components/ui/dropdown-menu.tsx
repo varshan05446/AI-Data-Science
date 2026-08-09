@@ -41,7 +41,10 @@ export function DropdownMenu({
 
   return (
     <div className="relative" ref={ref}>
-      <div onClick={() => setOpen((v) => !v)}>{trigger}</div>
+      {/* Capture-phase toggle: runs before any stopPropagation() in the
+          trigger (e.g. triggers nested inside links), and never re-fires
+          on bubbled clicks from menu items. */}
+      <div onClickCapture={() => setOpen((v) => !v)}>{trigger}</div>
       {open && (
         <div
           role="menu"

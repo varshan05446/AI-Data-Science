@@ -10,6 +10,7 @@ work with immediately.
 from __future__ import annotations
 
 import io
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -206,6 +207,58 @@ def main() -> None:
                 dataset.status = DatasetStatus.READY
                 db.add(ProfileReport(dataset_id=dataset.id, report=report))
 
+            # High-accuracy demo: a dataset with genuine learnable signal that
+            # reaches >97% accuracy in the Model Studio (see
+            # scripts/ml_accuracy_analysis.py for the reproducible recipe).
+            demo_ds = db.scalar(
+                select(Dataset).where(
+                    Dataset.project_id == main_project.id,
+                    Dataset.name == "High-Value Classification Demo",
+                )
+            )
+            if demo_ds is None:
+                demo_path = (
+                    Path(__file__).resolve().parents[3]
+                    / "infra"
+                    / "sample-data"
+                    / "sample_demo_classification.csv"
+                )
+                if demo_path.exists():
+                    df_demo = pd.read_csv(demo_path)
+                    buf = io.StringIO()
+                    df_demo.to_csv(buf, index=False)
+                    raw = buf.getvalue().encode("utf-8")
+
+                    demo_dataset = Dataset(
+                        project_id=main_project.id,
+                        workspace_id=workspace.id,
+                        name="High-Value Classification Demo",
+                        source_type="csv",
+                        original_filename="sample_demo_classification.csv",
+                        content_type="text/csv",
+                        size_bytes=len(raw),
+                        status=DatasetStatus.PROFILING,
+                        storage_key="",
+                    )
+                    db.add(demo_dataset)
+                    db.flush()
+
+                    key = (
+                        f"workspaces/{workspace.id}/datasets/{demo_dataset.id}/"
+                        "sample_demo_classification.csv"
+                    )
+                    get_storage().put(key, raw, "text/csv")
+                    demo_dataset.storage_key = key
+
+                    report = profile_dataframe(df_demo)
+                    demo_dataset.row_count = report["dataset_summary"]["rows"]
+                    demo_dataset.column_count = report["dataset_summary"]["columns"]
+                    demo_dataset.quality_score = report["quality"]["score"]
+                    demo_dataset.status = DatasetStatus.READY
+                    db.add(
+                        ProfileReport(dataset_id=demo_dataset.id, report=report)
+                    )
+
         db.commit()
     finally:
         db.close()
@@ -217,6 +270,8 @@ def main() -> None:
     print("  User:     Arjun Mehta (Data Scientist)")
     print("  Workspace: DataMind Production")
     print("  Projects:  Seeded showcase projects from design mockup")
+    print("  Datasets:  Customer Data 2024, High-Value Classification Demo")
+    print("             (demo target 'high_value' reaches >97% accuracy)")
     print("-" * 40)
 
 

@@ -38,6 +38,7 @@ import type {
   ExportFormatsResponse,
   NotebookInfo,
   NotebookExecuteResult,
+  SignalScanEntry,
   SqlDataset,
   SqlExecuteResponse,
   TeamInviteRequest,
@@ -300,6 +301,8 @@ export const api = {
         method: "POST",
         body,
       }),
+    signalScan: (token: string, id: string) =>
+      apiFetch<SignalScanEntry[]>(`/datasets/${id}/models/signal-scan`, { token }),
   },
   reports: {
     center: (token: string, id: string) =>
@@ -317,11 +320,11 @@ export const api = {
   sql: {
     datasets: (token: string) =>
       apiFetch<SqlDataset[]>("/sql/datasets", { token }),
-    execute: (token: string, datasetId: string, query: string, limit?: number) =>
-      apiFetch<SqlExecuteResponse>(`/datasets/${datasetId}/sql/execute`, {
+    execute: (token: string, datasetIds: string[], query: string, limit?: number) =>
+      apiFetch<SqlExecuteResponse>("/sql/execute", {
         token,
         method: "POST",
-        body: { query, limit: limit ?? 1000 },
+        body: { query, limit: limit ?? 1000, dataset_ids: datasetIds },
       }),
   },
   team: {

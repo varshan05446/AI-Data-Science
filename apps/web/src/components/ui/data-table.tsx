@@ -73,6 +73,7 @@ export function DataTable<T>({
     y: number;
     row: T;
   } | null>(null);
+  const menuRef = React.useRef<HTMLDivElement>(null);
 
   const cellText = React.useCallback(
     (col: DataTableColumn<T>, row: T) =>
@@ -110,6 +111,29 @@ export function DataTable<T>({
   React.useEffect(() => {
     setPage(0);
   }, [query, sort]);
+
+  // Keep the fixed-position context menu fully inside the viewport: rows
+  // near the right/bottom edge would otherwise render the menu off-screen.
+  React.useLayoutEffect(() => {
+    const el = menuRef.current;
+    if (!menu || !el) return;
+    const r = el.getBoundingClientRect();
+    const pad = 8;
+    // Single monotonic clamp: shift left/up when overflowing the right/bottom
+    // edge, shift right/down when overflowing the left/top edge. One-shot and
+    // convergent even when the menu is wider than the viewport.
+    const dx = Math.max(
+      pad - r.left,
+      Math.min(0, window.innerWidth - pad - r.right),
+    );
+    const dy = Math.max(
+      pad - r.top,
+      Math.min(0, window.innerHeight - pad - r.bottom),
+    );
+    if (dx !== 0 || dy !== 0) {
+      setMenu((m) => (m ? { ...m, x: m.x + dx, y: m.y + dy } : m));
+    }
+  }, [menu]);
 
   // Close the context menu on any outside interaction.
   React.useEffect(() => {
@@ -309,6 +333,7 @@ export function DataTable<T>({
 
       {menu && rowActions && (
         <div
+          ref={menuRef}
           role="menu"
           style={{ top: menu.y, left: menu.x }}
           className="fixed z-50 min-w-[10rem] rounded-md border border-border bg-popover p-1 text-sm shadow-lg animate-fade"

@@ -9,8 +9,10 @@ import {
   LayoutList,
   LineChart,
   MoreHorizontal,
+  Pencil,
   Plus,
   Sparkles,
+  Trash2,
 } from "lucide-react";
 import Link from "next/link";
 import * as React from "react";
@@ -22,6 +24,11 @@ import { PageHeader } from "@/components/shared/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog } from "@/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownItem,
+  DropdownSeparator,
+} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +37,8 @@ import { StatusPill } from "@/components/ui/status-pill";
 import { Textarea } from "@/components/ui/textarea";
 import {
   useCreateProject,
+  useDeleteProject,
+  useRenameProject,
   useProjects,
   useWorkspaceStats,
 } from "@/lib/hooks";
@@ -39,13 +48,42 @@ export default function ProjectsPage() {
   const { data: projects, isLoading } = useProjects();
   const { data: stats, isLoading: statsLoading } = useWorkspaceStats();
   const createProject = useCreateProject();
+  const deleteProject = useDeleteProject();
+  const renameProject = useRenameProject();
   const [open, setOpen] = React.useState(false);
   const [viewMode, setViewMode] = React.useState<"grid" | "list">("grid");
+  const [renameTarget, setRenameTarget] = React.useState<{ id: string; name: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = React.useState<{ id: string; name: string } | null>(null);
 
   const totalProjects = projects?.length ?? 0;
   const totalDatasets =
     projects?.reduce((sum, p) => sum + (p.dataset_count ?? 0), 0) ?? 0;
   const totalModels = stats?.models ?? 0;
+
+  async function onRename(e: React.FormEvent<HTMLFormElement>) {
+    e.preventDefault();
+    if (!renameTarget) return;
+    const name = String(new FormData(e.currentTarget).get("name") || "").trim();
+    if (!name) return;
+    try {
+      await renameProject.mutateAsync({ id: renameTarget.id, name });
+      toast.success("Project renamed.");
+      setRenameTarget(null);
+    } catch {
+      toast.error("Could not rename project.");
+    }
+  }
+
+  async function onDelete() {
+    if (!deleteTarget) return;
+    try {
+      await deleteProject.mutateAsync(deleteTarget.id);
+      toast.success("Project deleted.");
+      setDeleteTarget(null);
+    } catch {
+      toast.error("Could not delete project.");
+    }
+  }
 
   async function onCreate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -195,17 +233,29 @@ export default function ProjectsPage() {
                       <Database className="h-3.5 w-3.5 text-primary/70" />
                       {p.dataset_count} {p.dataset_count === 1 ? "dataset" : "datasets"} • Updated {timeAgo(p.updated_at)}
                     </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        e.stopPropagation();
-                      }}
-                      className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-                      title="Project options"
+                    <DropdownMenu
+                      trigger={
+                        <button
+                          type="button"
+                          onClick={(e) => { e.preventDefault(); e.stopPropagation(); }}
+                          className="rounded p-1 hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
+                          title="Project options"
+                        >
+                          <MoreHorizontal className="h-3.5 w-3.5" />
+                        </button>
+                      }
                     >
-                      <MoreHorizontal className="h-3.5 w-3.5" />
-                    </button>
+                      <DropdownItem onClick={(e) => { e.preventDefault(); setRenameTarget({ id: p.id, name: p.name }); }}>
+                        <Pencil className="h-3.5 w-3.5" /> Rename
+                      </DropdownItem>
+                      <DropdownSeparator />
+                      <DropdownItem
+                        onClick={(e) => { e.preventDefault(); setDeleteTarget({ id: p.id, name: p.name }); }}
+                        className="text-destructive hover:text-destructive"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" /> Delete
+                      </DropdownItem>
+                    </DropdownMenu>
                   </div>
                 </CardContent>
               </Card>
@@ -244,6 +294,51 @@ export default function ProjectsPage() {
           ))}
         </div>
       )}
+
+      {/* Rename Dialog */}
+      <Dialog
+        open={!!renameTarget}
+        onOpenChange={(v) => !v && setRenameTarget(null)}
+        title="Rename Project"
+        description="Enter a new name for the project."
+      >
+        <form onSubmit={onRename} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="rename-name">Project Name *</Label>
+            <Input
+              id="rename-name"
+              name="name"
+              defaultValue={renameTarget?.name}
+              required
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button type="button" variant="outline" onClick={() => setRenameTarget(null)}>Cancel</Button>
+            <Button type="submit">Rename</Button>
+          </div>
+        </form>
+      </Dialog>
+
+      {/* Delete Confirm Dialog */}
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(v) => !v && setDeleteTarget(null)}
+        title="Delete Project"
+        description={`Are you sure you want to delete "${deleteTarget?.name}"? This cannot be undone.`}
+      >
+        <div className="flex justify-end gap-2 pt-2">
+          <Button type="button" variant="outline" onClick={() => setDeleteTarget(null)}>Cancel</Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={onDelete}
+            disabled={deleteProject.isPending}
+          >
+            {deleteProject.isPending ? "Deleting…" : "Delete"}
+          </Button>
+        </div>
+      </Dialog>
 
       {/* New Project Dialog */}
       <Dialog

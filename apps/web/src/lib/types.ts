@@ -776,6 +776,26 @@ export interface ModelPredictOut {
   top_drivers: { feature: string; importance: number }[];
 }
 
+/** One row of the Signal Discovery scan: a viable target + its achievable score. */
+export interface SignalScanEntry {
+  target: string;
+  task: MlTask;
+  primary_metric: string;
+  /** Hold-out score for the primary metric (f1_weighted / r2). */
+  test_score: number;
+  cv_mean?: number | null;
+  cv_std?: number | null;
+  best_model: string;
+  n_features: number;
+  /** True when the high score is a derived-column tautology, not real signal. */
+  leaky: boolean;
+  /** Column or expression that makes the target trivially recoverable. */
+  driver?: string | null;
+  note?: string | null;
+  /** Set when the per-target evaluation failed (entry is ranked but unscored). */
+  error?: string;
+}
+
 // --- Reports & exports -----------------------------------------------------
 export type ReportType = "executive" | "business" | "technical";
 
@@ -894,6 +914,7 @@ export interface ApiKeyCreate {
 export interface SqlExecuteRequest {
   query: string;
   limit?: number;
+  dataset_ids: string[];
 }
 
 export interface SqlExecuteResponse {

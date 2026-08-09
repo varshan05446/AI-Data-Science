@@ -97,6 +97,16 @@ export function useDeleteProject() {
   });
 }
 
+export function useRenameProject() {
+  const token = useToken();
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, name }: { id: string; name: string }) =>
+      api.projects.update(token, id, { name }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: queryKeys.projects }),
+  });
+}
+
 export function useMembers() {
   const token = useToken();
   return useQuery({
@@ -499,8 +509,8 @@ export function useSqlDatasets() {
 export function useExecuteSql() {
   const token = useToken();
   return useMutation({
-    mutationFn: ({ datasetId, query, limit }: { datasetId: string; query: string; limit?: number }) =>
-      api.sql.execute(token, datasetId, query, limit),
+    mutationFn: ({ datasetIds, query, limit }: { datasetIds: string[]; query: string; limit?: number }) =>
+      api.sql.execute(token, datasetIds, query, limit),
   });
 }
 
