@@ -35,6 +35,8 @@ from app.services.ml.discovery import scan_target_signals
 from app.services.ml.jobs import compute_config_hash, launch_training_job, reconcile_job
 from app.services.ml.objectives import build_objectives, dataset_ml_summary
 from app.services.ml.registry import available_models, optional_capabilities
+from app.services.ml.reinforcement import available_reinforcement, train_reinforcement
+from app.services.ml.semisupervised import available_semisupervised, train_semisupervised
 from app.services.ml.tasks_extra import train_clustering, train_timeseries
 
 router = APIRouter(tags=["models"])
@@ -62,6 +64,9 @@ def _models_by_task() -> dict[str, list[dict[str, Any]]]:
         out.setdefault(spec.task, []).append(
             {"key": spec.key, "label": spec.label, "tags": spec.tags}
         )
+    # Non-sklearn model families live outside the sklearn registry.
+    out["semi_supervised"] = available_semisupervised()
+    out["reinforcement"] = available_reinforcement()
     return out
 
 
@@ -130,9 +135,43 @@ def train_models(
     capture: dict[str, Any] = {}
     try:
         if body.task == "clustering":
-            result = train_clustering(df, model_keys=body.model_keys)
+            result = train_clustering(
+                df,
+                model_keys=body.model_keys,
+                n_clusters=body.n_clusters,
+                features=body.features,
+                scaling=(body.fitting or {}).get("scaling") or "standard",
+                encoding=(body.fitting or {}).get("encoding") or "onehot",
+                linkage=body.linkage,
+                random_state=body.random_state,
+            )
         elif body.task == "timeseries":
             result = train_timeseries(df, body.target)
+        elif body.task == "semi_supervised":
+            result = train_semisupervised(
+                df,
+                body.target,
+                model_keys=body.model_keys,
+                features=body.features,
+                test_size=body.test_size,
+                random_state=body.random_state,
+                threshold=body.threshold or 0.75,
+                base_estimator=body.base_estimator or "logistic_regression",
+                capture=capture,
+            )
+        elif body.task == "reinforcement":
+            result = train_reinforcement(
+                df,
+                target=body.target,
+                model_keys=body.model_keys,
+                features=body.features,
+                random_state=body.random_state,
+                gamma=body.gamma,
+                alpha=body.alpha,
+                max_iterations=body.max_iterations,
+                threshold=body.threshold,
+                n_bins=body.n_bins,
+            )
         else:
             task = body.task if body.task in ("classification", "regression") else None
             result = train_and_evaluate(
@@ -394,7 +433,7 @@ def predict_with_run(
         {"feature": f["feature"], "importance": f.get("importance", 0)}
         for f in importance
     ]
-    if run.task == "classification":
+    if run.task in ("classification", "semi_supervised"):
         explanation = (
             f"{run.best_model_label} predicts '{pred['prediction']}'"
             + (

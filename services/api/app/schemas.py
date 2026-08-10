@@ -231,6 +231,17 @@ class ModelTrainRequest(BaseModel):
     fitting: Optional[dict[str, Any]] = None
     # Async jobs only: retrain even when a cached run matches this exact config.
     force: bool = False
+    # Unsupervised clustering (task="clustering"): cluster count + linkage.
+    n_clusters: Optional[int] = Field(default=None, ge=2, le=50)
+    linkage: Optional[str] = Field(default=None, max_length=20)
+    # Semi-supervised (task="semi_supervised"): confidence threshold + base learner.
+    threshold: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    base_estimator: Optional[str] = Field(default=None, max_length=60)
+    # Reinforcement (task="reinforcement"): environment / learner hyperparameters.
+    gamma: Optional[float] = Field(default=None, ge=0.0, le=1.0)
+    alpha: Optional[float] = Field(default=None, ge=0.01, le=1.0)
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=10000)
+    n_bins: Optional[int] = Field(default=None, ge=2, le=20)
 
 
 class ModelConfigOut(BaseModel):

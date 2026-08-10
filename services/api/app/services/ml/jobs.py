@@ -23,6 +23,8 @@ from app.models import Dataset, ModelRun, TrainingJob
 from app.services.dataset_io import read_dataset_dataframe
 from app.services.ml.artifacts import save_artifact
 from app.services.ml.automl import AutoMLError, train_and_evaluate
+from app.services.ml.reinforcement import train_reinforcement
+from app.services.ml.semisupervised import train_semisupervised
 from app.services.ml.tasks_extra import train_clustering, train_timeseries
 
 _MAX_LOGS = 200
@@ -134,22 +136,63 @@ def _run_job(job_id: str) -> None:
 
         capture: dict[str, Any] = {}
         task = config.get("task")
+
+        def progress_cb(frac: float, stage: str, message: str | None) -> None:
+            # Engine fraction 0..1 maps onto the 5-95% band of the job.
+            update(5.0 + frac * 90.0, stage, message)
+
         try:
             if task == "clustering":
                 update(10.0, "train", "Running clustering algorithms…")
-                result = train_clustering(df, model_keys=config.get("model_keys"))
+                result = train_clustering(
+                    df,
+                    model_keys=config.get("model_keys"),
+                    n_clusters=config.get("n_clusters"),
+                    features=config.get("features"),
+                    scaling=(config.get("fitting") or {}).get("scaling") or "standard",
+                    encoding=(config.get("fitting") or {}).get("encoding") or "onehot",
+                    linkage=config.get("linkage"),
+                    random_state=config.get("random_state"),
+                    progress_cb=progress_cb,
+                )
                 update(90.0, "explain", "Clustering complete. Preparing results…")
             elif task == "timeseries":
                 update(10.0, "train", "Fitting time-series baselines…")
                 result = train_timeseries(df, config.get("target", ""))
                 update(90.0, "explain", "Forecast baselines complete. Preparing results…")
+            elif task == "semi_supervised":
+                update(10.0, "train", "Running semi-supervised learning…")
+                result = train_semisupervised(
+                    df,
+                    config.get("target", ""),
+                    model_keys=config.get("model_keys"),
+                    features=config.get("features"),
+                    test_size=config.get("test_size", 0.2),
+                    random_state=config.get("random_state"),
+                    threshold=config.get("threshold") or 0.75,
+                    base_estimator=config.get("base_estimator") or "logistic_regression",
+                    capture=capture,
+                    progress_cb=progress_cb,
+                )
+                update(90.0, "explain", "Semi-supervised training complete. Preparing results…")
+            elif task == "reinforcement":
+                update(10.0, "train", "Running reinforcement learning…")
+                result = train_reinforcement(
+                    df,
+                    target=config.get("target", ""),
+                    model_keys=config.get("model_keys"),
+                    features=config.get("features"),
+                    random_state=config.get("random_state"),
+                    gamma=config.get("gamma"),
+                    alpha=config.get("alpha"),
+                    max_iterations=config.get("max_iterations"),
+                    threshold=config.get("threshold"),
+                    n_bins=config.get("n_bins"),
+                    progress_cb=progress_cb,
+                )
+                update(90.0, "explain", "Reinforcement learning complete. Preparing results…")
             else:
                 eff_task = task if task in ("classification", "regression") else None
-
-                def progress_cb(frac: float, stage: str, message: str | None) -> None:
-                    # Engine fraction 0..1 maps onto the 5-95% band of the job.
-                    update(5.0 + frac * 90.0, stage, message)
-
                 result = train_and_evaluate(
                     df,
                     config.get("target", ""),

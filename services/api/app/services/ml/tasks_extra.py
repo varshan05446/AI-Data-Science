@@ -19,6 +19,7 @@ from app.services.ml.automl import (
     _RANDOM_STATE,
     _build_preprocessor,
     _select_features,
+    ProgressCallback,
 )
 from app.services.ml.registry import available_models, get_model
 
@@ -31,10 +32,30 @@ def train_clustering(
     *,
     model_keys: list[str] | None = None,
     n_clusters: int | None = None,
+    features: list[str] | None = None,
+    scaling: str = "standard",
+    encoding: str = "onehot",
+    linkage: str = "ward",
+    random_state: int | None = None,
+    progress_cb: ProgressCallback | None = None,
 ) -> dict[str, Any]:
-    """Cluster the numeric/categorical feature space and rank by silhouette."""
+    """Cluster the feature space and rank algorithms by silhouette.
+
+    KMeans is auto-ranked: a silhouette-vs-k elbow scan picks the best cluster
+    count, and the winner carries a per-feature contribution ranking plus the
+    explained-variance of its PCA projection.
+    """
+    from sklearn.cluster import KMeans
     from sklearn.decomposition import PCA
+    from sklearn.feature_selection import f_classif
     from sklearn.metrics import davies_bouldin_score, silhouette_score
+
+    def notify(frac: float, stage: str, message: str | None = None) -> None:
+        if progress_cb is not None:
+            try:
+                progress_cb(frac, stage, message)
+            except Exception:  # noqa: BLE001 - progress is best-effort
+                pass
 
     data = df.copy()
     if len(data) < 20:
@@ -43,18 +64,48 @@ def train_clustering(
         data = data.sample(_ROW_CAP, random_state=_RANDOM_STATE).reset_index(drop=True)
 
     numeric, categorical = _select_features(data, target="")
+    if features:
+        numeric = [c for c in numeric if c in features]
+        categorical = [c for c in categorical if c in features]
     features = numeric + categorical
     if not features:
         raise AutoMLError("No usable numeric/categorical columns found for clustering.")
 
-    pre = _build_preprocessor(numeric, categorical)
-    X = pre.fit_transform(data[features])
-    X = np.asarray(X, dtype=float)
+    pre = _build_preprocessor(numeric, categorical, scaling=scaling, encoding=encoding)
+    X = np.asarray(pre.fit_transform(data[features]), dtype=float)
+    notify(0.1, "preprocess", f"Encoded {len(features)} feature(s) for clustering.")
 
     available = {m.key for m in available_models("clustering")}
     keys = [k for k in (model_keys or _DEFAULT_CLUSTERERS) if k in available]
     if not keys:
         raise AutoMLError("No clustering models are available.")
+
+    # Silhouette-vs-k elbow: auto-rank the best KMeans cluster count. This is a
+    # dataset-level diagnostic, so it is computed up-front (whenever KMeans is in
+    # the run set and no explicit cluster count was chosen) and the winning k is
+    # used for the KMeans fit.
+    elbow: dict[str, Any] | None = None
+    auto_k: int | None = None
+    if "kmeans" in keys and not n_clusters:
+        try:
+            ks = list(range(2, min(10, int(np.sqrt(len(data)))) + 1))
+            scores: list[float | None] = []
+            for k in ks:
+                km = KMeans(n_clusters=k, n_init=10, random_state=_RANDOM_STATE)
+                lab = km.fit_predict(X)
+                if 1 < len(set(lab)) < len(lab):
+                    scores.append(round(float(silhouette_score(X, lab)), 4))
+                else:
+                    scores.append(None)
+            valid = [s for s in scores if s is not None]
+            if valid:
+                auto_k = ks[int(np.argmax(valid))]
+                elbow = {"ks": ks, "scores": scores, "best_k": auto_k}
+        except Exception:  # noqa: BLE001 - elbow is best-effort
+            elbow = None
+            auto_k = None
+        if elbow is not None:
+            notify(0.15, "preprocess", f"Silhouette elbow picked k={auto_k} for KMeans.")
 
     leaderboard: list[dict[str, Any]] = []
     label_map: dict[str, np.ndarray] = {}
@@ -63,9 +114,16 @@ def train_clustering(
         if spec is None:
             continue
         estimator = spec.builder()
-        if key == "kmeans" and n_clusters:
+        if key == "kmeans":
+            k = int(n_clusters) if n_clusters else auto_k
+            if k:
+                try:
+                    estimator.set_params(n_clusters=int(np.clip(k, 2, 20)))
+                except (ValueError, KeyError):
+                    pass
+        if key == "agglomerative":
             try:
-                estimator.set_params(n_clusters=int(np.clip(n_clusters, 2, 20)))
+                estimator.set_params(linkage=linkage)
             except (ValueError, KeyError):
                 pass
         started = time.perf_counter()
@@ -107,6 +165,7 @@ def train_clustering(
 
     best = scored[0]
     best_labels = label_map[best["key"]]
+    notify(0.7, "explain", f"Best: {best['label']}. Building cluster diagnostics…")
 
     # 2-D projection for a coloured scatter of the winning clustering.
     try:
@@ -119,6 +178,39 @@ def train_clustering(
         "y": [round(float(coords[i, 1]), 4) for i in idx],
         "cluster": [str(int(best_labels[i])) for i in idx],
     }
+
+    # Per-feature contribution to cluster separation (ANOVA F-score, 0-1 scaled).
+    # Uses a label-encoded copy of the *original* columns so each displayed
+    # feature maps to exactly one score (the one-hot matrix has more columns).
+    importance: list[dict[str, Any]] = []
+    try:
+        contrib = pd.DataFrame(index=data.index)
+        for col in numeric:
+            contrib[col] = pd.to_numeric(data[col], errors="coerce").fillna(
+                data[col].median()
+            )
+        for col in categorical:
+            contrib[col] = data[col].astype("category").cat.codes
+        X_contrib = np.asarray(contrib, dtype=float)
+        fv, _ = f_classif(X_contrib, best_labels)
+        fv = np.nan_to_num(np.asarray(fv, dtype=float), nan=0.0)
+        if fv.max() > 0:
+            norm = fv / fv.max()
+            order = np.argsort(norm)[::-1]
+            importance = [
+                {"feature": features[i], "importance": round(float(norm[i]), 4)}
+                for i in order
+            ]
+    except Exception:  # noqa: BLE001 - importance is best-effort
+        importance = []
+
+    # Explained variance of the PCA projection (dimensionality diagnostics).
+    explained_variance: list[float] = []
+    try:
+        pca = PCA(n_components=min(10, X.shape[1]), random_state=_RANDOM_STATE).fit(X)
+        explained_variance = [round(float(v), 4) for v in pca.explained_variance_ratio_]
+    except Exception:  # noqa: BLE001
+        explained_variance = []
 
     return {
         "task": "clustering",
@@ -134,9 +226,19 @@ def train_clustering(
             "key": best["key"],
             "label": best["label"],
             "metrics": best["metrics"],
-            "feature_importance": [],
+            "feature_importance": importance,
             "n_clusters": int(best["metrics"].get("n_clusters", 0)),
             "cluster_plot": cluster_plot,
+            "elbow": elbow,
+            "auto_k": auto_k,
+            "explained_variance": explained_variance,
+            "params": {
+                "scaling": scaling,
+                "encoding": encoding,
+                "linkage": linkage,
+                "random_state": random_state or _RANDOM_STATE,
+            },
+            "confidence": round(float(best["metrics"].get("silhouette", 0.0)), 4),
         },
     }
 

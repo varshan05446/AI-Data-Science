@@ -82,7 +82,12 @@ export function Playground({ datasetId, run }: { datasetId: string; run: ModelRu
 
   const entry = getEntry(datasetId, run.id);
 
-  if (run.result.task !== "classification" && run.result.task !== "regression") return null;
+  if (
+    run.result.task !== "classification" &&
+    run.result.task !== "regression" &&
+    run.result.task !== "semi_supervised"
+  )
+    return null;
 
   if (!hasArtifact) {
     return (

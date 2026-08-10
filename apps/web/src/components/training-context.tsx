@@ -170,10 +170,18 @@ export function TrainingProvider({ children }: { children: React.ReactNode }) {
             });
             return;
           }
+          const taskLabel =
+            body.task === "clustering"
+              ? "clustering models"
+              : body.task === "reinforcement"
+                ? "reinforcement models"
+                : body.task === "semi_supervised"
+                  ? "semi-supervised models"
+                  : body.target
+                    ? `models for "${body.target}"`
+                    : "models";
           toastIdRef.current = toast.loading(
-            body.tune || body.optimize
-              ? `Training & tuning models for "${body.target}"…`
-              : `Training models for "${body.target}"…`,
+            `Training${body.tune || body.optimize ? " & tuning" : ""} ${taskLabel}…`,
             { duration: Infinity },
           );
           setLastRun(null);

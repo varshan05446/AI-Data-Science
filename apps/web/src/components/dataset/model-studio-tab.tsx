@@ -50,6 +50,8 @@ const WORKFLOW_STEPS = ["Feature Selection (X/Y)", "Workflow & Building", "Train
 
 /** Payload produced by the Manual Workflow (hyperparameters, ensemble, fitting). */
 interface ManualTrainPayload {
+  /** ML paradigm: supervised (null → inferred), clustering, semi_supervised, reinforcement. */
+  task?: string | null;
   model_keys: string[] | null;
   test_size: number;
   cv_folds: number;
@@ -60,6 +62,14 @@ interface ManualTrainPayload {
   hyperparameters?: Record<string, unknown> | null;
   ensemble?: Record<string, unknown> | null;
   fitting?: Record<string, unknown> | null;
+  n_clusters?: number | null;
+  linkage?: string | null;
+  threshold?: number | null;
+  base_estimator?: string | null;
+  gamma?: number | null;
+  alpha?: number | null;
+  max_iterations?: number | null;
+  n_bins?: number | null;
 }
 
 function WorkflowProgress({ current }: { current: number }) {
@@ -184,18 +194,21 @@ export function ModelStudioTab({ datasetId }: { datasetId: string }) {
   const [target, setTarget] = React.useState<string>("");
   const [features, setFeatures] = React.useState<string[]>([]);
   const [selectedRunId, setSelectedRunId] = React.useState<string | null>(null);
+  // Set when the user deliberately picks "No target" so the seed effect below
+  // does not re-override their choice with the default suggestion.
+  const [noTargetOverride, setNoTargetOverride] = React.useState(false);
   const { data: selectedRun } = useModelRun(datasetId, selectedRunId);
 
   // Seed default target & features when config loads
   React.useEffect(() => {
     if (config) {
       const fallbackTarget = config.target_suggestions[0]?.column ?? config.columns[0]?.name ?? "";
-      if (!target && fallbackTarget) {
+      if (!target && !noTargetOverride && fallbackTarget) {
         setTarget(fallbackTarget);
         setFeatures(recommendFeatures(config.columns, fallbackTarget));
       }
     }
-  }, [config, target]);
+  }, [config, target, noTargetOverride]);
 
   const activeRun: ModelRun | null = selectedRunId
     ? selectedRun ?? null
@@ -204,24 +217,29 @@ export function ModelStudioTab({ datasetId }: { datasetId: string }) {
       : null;
   const result = activeRun?.result;
 
-  const currentStep = isPending ? 2 : result ? 3 : target ? 1 : 0;
+  // A target is required for supervised paradigms but not for clustering; either
+  // a target or a feature set makes Step 1 "active".
+  const currentStep = isPending ? 2 : result ? 3 : target || features.length ? 1 : 0;
 
   // Pick a target from the Signal Discovery scan: set it as the Y column and
   // auto-recommend its features, exactly like the default target seeding.
   function handlePickTarget(column: string) {
     setTarget(column);
+    setNoTargetOverride(false);
     if (config) setFeatures(recommendFeatures(config.columns, column));
   }
 
   function runManualTraining(payload: ManualTrainPayload) {
-    if (!target) {
+    const task = payload.task ?? null;
+    // Clustering is target-less; every other paradigm needs a Y column.
+    if (task !== "clustering" && !target) {
       toast.error("Please select a Target Variable (Y) in Step 1.");
       return;
     }
     setSelectedRunId(null);
     const body: ModelTrainBody = {
       target,
-      task: null,
+      task,
       features: features.length ? features : null,
       model_keys: payload.model_keys,
       test_size: payload.test_size,
@@ -232,6 +250,14 @@ export function ModelStudioTab({ datasetId }: { datasetId: string }) {
       hyperparameters: payload.hyperparameters ?? null,
       ensemble: payload.ensemble ?? null,
       fitting: payload.fitting ?? null,
+      n_clusters: payload.n_clusters ?? null,
+      linkage: payload.linkage ?? null,
+      threshold: payload.threshold ?? null,
+      base_estimator: payload.base_estimator ?? null,
+      gamma: payload.gamma ?? null,
+      alpha: payload.alpha ?? null,
+      max_iterations: payload.max_iterations ?? null,
+      n_bins: payload.n_bins ?? null,
     };
     startTraining(token, datasetId, body);
   }
@@ -315,8 +341,12 @@ export function ModelStudioTab({ datasetId }: { datasetId: string }) {
             config={config}
             target={target}
             features={features}
+            allowNoTarget
             onChange={(patch) => {
-              if (patch.target !== undefined) setTarget(patch.target);
+              if (patch.target !== undefined) {
+                setTarget(patch.target);
+                setNoTargetOverride(patch.target === "");
+              }
               if (patch.features !== undefined) setFeatures(patch.features);
             }}
           />

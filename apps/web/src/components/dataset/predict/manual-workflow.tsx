@@ -23,6 +23,9 @@ import type { ModelConfig } from "@/lib/types";
 
 import { AlgorithmConfig, type HyperparameterValues } from "./algorithm-config";
 import { EnsembleBuilder, type EnsembleConfig } from "./ensemble-builder";
+import { ReinforcementPanel } from "./reinforcement-panel";
+import { SemiSupervisedPanel } from "./semi-supervised-panel";
+import { UnsupervisedPanel } from "./unsupervised-panel";
 
 export type MLCategory = "supervised" | "unsupervised" | "semi_supervised" | "reinforcement";
 
@@ -361,12 +364,29 @@ export function ManualWorkflow({
                 </Button>
               </div>
             </>
+          ) : activeCategory === "unsupervised" ? (
+            <UnsupervisedPanel
+              config={config}
+              features={features}
+              onTrain={onTrain}
+              isPending={isPending}
+            />
+          ) : activeCategory === "semi_supervised" ? (
+            <SemiSupervisedPanel
+              config={config}
+              target={target}
+              features={features}
+              onTrain={onTrain}
+              isPending={isPending}
+            />
           ) : (
-            <Card className="border-border/70 shadow-sm p-8 text-center">
-              <p className="text-sm text-muted-foreground">
-                {activeCategory.replace("_", " ").toUpperCase()} models are available in the extended toolkit. Select Supervised Learning for model training.
-              </p>
-            </Card>
+            <ReinforcementPanel
+              config={config}
+              target={target}
+              features={features}
+              onTrain={onTrain}
+              isPending={isPending}
+            />
           )}
         </div>
       </div>

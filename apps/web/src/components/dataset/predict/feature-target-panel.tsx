@@ -63,11 +63,14 @@ export function FeatureTargetPanel({
   target,
   features,
   onChange,
+  allowNoTarget = false,
 }: {
   config: ModelConfig;
   target: string;
   features: string[];
   onChange: (patch: Partial<FeatureTargetValue>) => void;
+  /** Render a "No target (unsupervised)" option, e.g. for clustering. */
+  allowNoTarget?: boolean;
 }) {
   const [query, setQuery] = React.useState("");
   const [typeFilter, setTypeFilter] = React.useState<string>("all");
@@ -266,15 +269,42 @@ export function FeatureTargetPanel({
                 </Badge>
               ) : (
                 <Badge variant="outline" className="text-[10px] text-amber-500 border-amber-500/30">
-                  Required
+                  {allowNoTarget ? "Optional" : "Required"}
                 </Badge>
               )}
             </div>
             <p className="pt-1 text-[11px] text-muted-foreground">
-              Select exactly one target column to predict. Automatically disabled in X.
+              {allowNoTarget
+                ? "Optional — leave empty for unsupervised tasks (e.g. clustering). Selecting a column disables it in X."
+                : "Select exactly one target column to predict. Automatically disabled in X."}
             </p>
           </CardHeader>
           <CardContent className="max-h-72 flex-1 space-y-1 overflow-y-auto p-2">
+            {allowNoTarget && (
+              <button
+                type="button"
+                onClick={() => onChange({ target: "" })}
+                className={cn(
+                  "flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-xs transition-colors border",
+                  target === ""
+                    ? "bg-amber-500/10 border-amber-500/30 text-amber-500 font-medium"
+                    : "border-transparent text-muted-foreground hover:bg-accent hover:border-border/50",
+                )}
+              >
+                <span
+                  className={cn(
+                    "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border transition-all",
+                    target === "" ? "border-amber-500 bg-amber-500/20" : "border-muted-foreground/50",
+                  )}
+                >
+                  {target === "" && <span className="h-2 w-2 rounded-full bg-amber-400" />}
+                </span>
+                <span className="font-medium">No target (unsupervised)</span>
+                <Badge variant="outline" className="ml-auto shrink-0 text-[9px] font-sans">
+                  Clustering
+                </Badge>
+              </button>
+            )}
             {visible.map((c) => {
               const selected = c.name === target;
               const suggestion = suggestionFor(c.name);

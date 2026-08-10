@@ -10,13 +10,18 @@ import { Sparkles } from "lucide-react";
 import * as React from "react";
 
 import {
+  actionCountChart,
   clusterChart,
+  convergenceChart,
+  elbowChart,
   forecastChart,
   importanceChart,
   learningCurveChart,
   predictionDistChart,
+  pseudoLabelChart,
   residualChart,
   rocChart,
+  valueHistogramChart,
 } from "@/components/dataset/predict/model-diagnostics";
 import { PlotlyChart } from "@/components/charts/plotly-chart";
 import { Badge } from "@/components/ui/badge";
@@ -35,10 +40,17 @@ const METRIC_LABELS: Record<string, string> = {
   mae: "MAE",
   silhouette: "Silhouette",
   n_clusters: "Clusters",
+  policy_accuracy: "Policy Accuracy",
+  avg_reward: "Avg Reward",
+  iterations: "Iterations",
+  labeled: "Labeled",
+  unlabeled: "Unlabeled",
 };
 
 function fmtMetric(key: string, value: number): string {
-  if (["rmse", "mae", "n_clusters"].includes(key)) return value.toLocaleString();
+  if (["rmse", "mae", "n_clusters", "iterations", "labeled", "unlabeled"].includes(key)) {
+    return value.toLocaleString();
+  }
   return value.toFixed(3);
 }
 
@@ -103,6 +115,35 @@ function ParamsTable({ params }: { params: Record<string, unknown> }) {
             {k.replace(/^model__/, "")}
           </span>
           <span className="font-mono">{String(v)}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** PCA explained-variance ratios shown as labelled horizontal bars. */
+function ExplainedVarianceView({ ratios }: { ratios: number[] }) {
+  const max = Math.max(1e-9, ...ratios);
+  const cumulative = ratios.reduce<number[]>((acc, r, i) => {
+    acc.push((acc[i - 1] ?? 0) + r);
+    return acc;
+  }, []);
+  return (
+    <div className="space-y-1.5 text-xs">
+      {ratios.map((r, i) => (
+        <div key={i}>
+          <div className="mb-0.5 flex justify-between text-muted-foreground">
+            <span className="font-mono">PC{i + 1}</span>
+            <span>
+              {(r * 100).toFixed(1)}% · cum {(cumulative[i] * 100).toFixed(1)}%
+            </span>
+          </div>
+          <div className="h-2 rounded-full bg-muted">
+            <div
+              className="h-2 rounded-full bg-primary/70"
+              style={{ width: `${(r / max) * 100}%` }}
+            />
+          </div>
         </div>
       ))}
     </div>
@@ -220,9 +261,109 @@ export function ModelDetailDrawer({
             </Panel>
           )}
 
+          {task === "clustering" && best.elbow && (
+            <Panel title="Silhouette vs. cluster count">
+              <PlotlyChart chart={elbowChart(best.elbow, id)} height={260} />
+            </Panel>
+          )}
+
+          {task === "clustering" && best.explained_variance && best.explained_variance.length > 0 && (
+            <Panel title="PCA explained variance">
+              <ExplainedVarianceView ratios={best.explained_variance} />
+            </Panel>
+          )}
+
           {task === "timeseries" && best.forecast && (
             <Panel title="Forecast">
               <PlotlyChart chart={forecastChart(best.forecast, id)} height={260} />
+            </Panel>
+          )}
+
+          {task === "semi_supervised" && best.labeled != null && (
+            <Panel title="Semi-supervised setup">
+              <div className="grid grid-cols-2 gap-3 text-sm">
+                <div>
+                  <div className="text-[11px] text-muted-foreground">Labeled rows</div>
+                  <div className="mt-0.5 font-mono text-base font-semibold">
+                    {best.labeled.toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-muted-foreground">Unlabeled rows</div>
+                  <div className="mt-0.5 font-mono text-base font-semibold">
+                    {(best.unlabeled ?? 0).toLocaleString()}
+                  </div>
+                </div>
+                <div>
+                  <div className="text-[11px] text-muted-foreground">Pseudo-label threshold</div>
+                  <div className="mt-0.5 font-mono text-base font-semibold">{best.threshold ?? "—"}</div>
+                </div>
+                {best.base_estimator && (
+                  <div>
+                    <div className="text-[11px] text-muted-foreground">Base estimator</div>
+                    <div className="mt-0.5 font-mono text-base font-semibold">{best.base_estimator}</div>
+                  </div>
+                )}
+              </div>
+              {best.pseudo_labels?.count != null && (
+                <p className="mt-3 text-xs text-muted-foreground">
+                  {best.pseudo_labels.count.toLocaleString()} rows pseudo-labelled from the unlabeled
+                  pool (mean confidence{" "}
+                  {best.pseudo_labels.mean_confidence != null
+                    ? (best.pseudo_labels.mean_confidence * 100).toFixed(0) + "%"
+                    : "—"}
+                  ).
+                </p>
+              )}
+            </Panel>
+          )}
+
+          {task === "semi_supervised" && best.pseudo_labels?.labels?.length && (
+            <Panel title="Pseudo-labelled rows by class">
+              <PlotlyChart chart={pseudoLabelChart(best.pseudo_labels, id)} height={260} />
+            </Panel>
+          )}
+
+          {task === "reinforcement" && best.convergence && (
+            <Panel title={`Policy convergence${best.convergence.iterations != null ? ` · ${best.convergence.iterations} iterations` : ""}`}>
+              <PlotlyChart chart={convergenceChart(best.convergence, id)} height={260} />
+            </Panel>
+          )}
+
+          {task === "reinforcement" && best.action_counts && best.action_counts.length > 0 && (
+            <Panel title="Action selection counts">
+              <PlotlyChart chart={actionCountChart(best.action_counts, id)} height={260} />
+            </Panel>
+          )}
+
+          {task === "reinforcement" && best.value_histogram && best.value_histogram.length > 0 && (
+            <Panel title="Learned state-values">
+              <PlotlyChart chart={valueHistogramChart(best.value_histogram, id)} height={260} />
+            </Panel>
+          )}
+
+          {task === "reinforcement" && best.state_samples && best.state_samples.length > 0 && (
+            <Panel title="Learned policy (state → action)">
+              <div className="max-h-56 overflow-y-auto scrollbar-thin">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-card">
+                    <tr className="text-muted-foreground">
+                      <th className="py-1 pr-3 text-left font-medium">State</th>
+                      <th className="py-1 pr-3 text-left font-medium">Action</th>
+                      <th className="py-1 text-right font-medium">Value</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {best.state_samples.slice(0, 200).map((s, i) => (
+                      <tr key={i} className="border-t border-dashed">
+                        <td className="py-1 pr-3 font-mono">{s.state}</td>
+                        <td className="py-1 pr-3 font-medium">{s.action}</td>
+                        <td className="py-1 text-right font-mono">{s.value.toFixed(3)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </Panel>
           )}
 

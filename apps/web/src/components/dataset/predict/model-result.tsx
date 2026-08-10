@@ -13,8 +13,11 @@ import { PlotlyChart } from "@/components/charts/plotly-chart";
 import { ModelDetailDrawer } from "@/components/dataset/predict/model-detail";
 import {
   clusterChart,
+  convergenceChart,
+  elbowChart,
   forecastChart,
   importanceChart,
+  pseudoLabelChart,
 } from "@/components/dataset/predict/model-diagnostics";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,10 +45,17 @@ const METRIC_LABELS: Record<string, string> = {
   mae: "MAE",
   silhouette: "Silhouette",
   n_clusters: "Clusters",
+  policy_accuracy: "Policy Accuracy",
+  avg_reward: "Avg Reward",
+  iterations: "Iterations",
+  labeled: "Labeled",
+  unlabeled: "Unlabeled",
 };
 
 function fmtMetric(key: string, value: number): string {
-  if (["rmse", "mae", "n_clusters"].includes(key)) return value.toLocaleString();
+  if (["rmse", "mae", "n_clusters", "iterations", "labeled", "unlabeled"].includes(key)) {
+    return value.toLocaleString();
+  }
   return value.toFixed(3);
 }
 
@@ -103,13 +113,20 @@ export function ModelResultView({ result }: { result: ModelResult }) {
   const [detail, setDetail] = React.useState<ModelBest | null>(null);
 
   const metricKeys = Object.keys(best.metrics);
-  const isUnsupervised = task === "clustering" || task === "timeseries";
+  // Banner wording: only target-less tasks skip the "predicting {target}" form.
+  const targetless = task === "clustering" || task === "timeseries" || task === "reinforcement";
   const bestEntry = leaderboard.find((e) => e.key === best.key);
   const leakageRemoved = result.leakage?.removed ?? [];
 
   // Headline diagnostic preview beside feature importance.
   const previewChart = React.useMemo(() => {
-    if (task === "clustering" && best.cluster_plot) return clusterChart(best.cluster_plot, best.key);
+    if (task === "clustering") {
+      if (best.elbow) return elbowChart(best.elbow, best.key);
+      if (best.cluster_plot) return clusterChart(best.cluster_plot, best.key);
+    }
+    if (task === "reinforcement" && best.convergence) return convergenceChart(best.convergence, best.key);
+    if (task === "semi_supervised" && best.pseudo_labels?.labels?.length)
+      return pseudoLabelChart(best.pseudo_labels, best.key);
     if (task === "timeseries" && best.forecast) return forecastChart(best.forecast, best.key);
     return null;
   }, [task, best]);
@@ -124,8 +141,8 @@ export function ModelResultView({ result }: { result: ModelResult }) {
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              {isUnsupervised ? "Best model" : "Best model for predicting"}{" "}
-              {!isUnsupervised && <span className="font-medium text-foreground">{result.target}</span>}
+              {targetless ? "Best model" : "Best model for predicting"}{" "}
+              {!targetless && <span className="font-medium text-foreground">{result.target}</span>}
               <Badge variant="secondary" className="text-[10px]">
                 {task}
               </Badge>
@@ -157,6 +174,38 @@ export function ModelResultView({ result }: { result: ModelResult }) {
           </Button>
         </CardContent>
       </Card>
+
+      {/* Task-specific setup strip */}
+      {(task === "semi_supervised" || task === "reinforcement") && (
+        <div className="flex flex-wrap items-center gap-2 rounded-lg border bg-muted/30 px-4 py-2.5 text-xs text-muted-foreground">
+          {task === "semi_supervised" && best.labeled != null && (
+            <>
+              <span>
+                <span className="font-medium text-foreground">{best.labeled.toLocaleString()}</span>{" "}
+                labeled · <span className="font-medium text-foreground">{best.unlabeled?.toLocaleString()}</span>{" "}
+                unlabeled rows
+              </span>
+              {best.threshold != null && (
+                <Badge variant="outline" className="text-[10px]">pseudo-label threshold {best.threshold}</Badge>
+              )}
+            </>
+          )}
+          {task === "reinforcement" && (
+            <>
+              <span>
+                Discrete state space:{" "}
+                <span className="font-medium text-foreground">
+                  {String(best.params?.n_states ?? "—")} states
+                </span>{" "}
+                × <span className="font-medium text-foreground">{String(best.params?.n_actions ?? "—")} actions</span>
+              </span>
+              {best.avg_reward != null && (
+                <Badge variant="outline" className="text-[10px]">avg reward {best.avg_reward.toFixed(3)}</Badge>
+              )}
+            </>
+          )}
+        </div>
+      )}
 
       {/* Leakage protection notice */}
       {leakageRemoved.length > 0 && (
@@ -232,22 +281,16 @@ export function ModelResultView({ result }: { result: ModelResult }) {
       </div>
 
       {(() => {
-        const importanceCard = !isUnsupervised ? (
+        const importanceCard = best.feature_importance.length ? (
           <Card className="flex h-full flex-col">
             <CardHeader>
-              <CardTitle className="text-sm">Feature importance (permutation)</CardTitle>
+              <CardTitle className="text-sm">Feature importance</CardTitle>
             </CardHeader>
             <CardContent className="flex-1">
-              {best.feature_importance.length ? (
-                <PlotlyChart
-                  chart={importanceChart(best.feature_importance, best.key, "Feature importance")}
-                  height={Math.max(240, best.feature_importance.length * 26)}
-                />
-              ) : (
-                <p className="text-sm text-muted-foreground">
-                  Importance could not be computed for this model.
-                </p>
-              )}
+              <PlotlyChart
+                chart={importanceChart(best.feature_importance, best.key, "Feature importance")}
+                height={Math.max(240, best.feature_importance.length * 26)}
+              />
             </CardContent>
           </Card>
         ) : null;

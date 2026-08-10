@@ -480,7 +480,13 @@ export interface ReportResponse {
 }
 
 // --- AutoML / Model prediction ---------------------------------------------
-export type MlTask = "classification" | "regression" | "clustering" | "timeseries";
+export type MlTask =
+  | "classification"
+  | "regression"
+  | "clustering"
+  | "timeseries"
+  | "semi_supervised"
+  | "reinforcement";
 
 export interface ModelColumnInfo {
   name: string;
@@ -652,6 +658,29 @@ export interface ClassificationReportRow {
   support: number;
 }
 
+export interface ElbowCurve {
+  ks: number[];
+  scores: (number | null)[];
+  /** Auto-ranked cluster count (the silhouette peak), when computed. */
+  best_k?: number | null;
+}
+
+export interface PseudoLabelEntry {
+  label: string;
+  count: number;
+}
+
+export interface ActionCount {
+  action: string;
+  count: number;
+}
+
+export interface ConvergenceTrace {
+  final_delta: number;
+  iterations: number;
+  trace: number[];
+}
+
 export interface ModelBest {
   key: string;
   label: string;
@@ -673,6 +702,23 @@ export interface ModelBest {
   n_clusters?: number;
   forecast?: Forecast;
   confidence?: number;
+  // Unsupervised (clustering): auto-ranked cluster count + dimensionality.
+  elbow?: ElbowCurve | null;
+  auto_k?: number | null;
+  explained_variance?: number[];
+  // Semi-supervised: partial-label stats.
+  labeled?: number;
+  unlabeled?: number;
+  threshold?: number;
+  base_estimator?: string;
+  pseudo_labels?: { count: number; labels: PseudoLabelEntry[]; histogram: { edges: number[]; counts: number[] } | null; mean_confidence?: number };
+  // Reinforcement: policy/value diagnostics.
+  convergence?: ConvergenceTrace | null;
+  value_histogram?: number[];
+  action_counts?: ActionCount[];
+  state_samples?: { state: number; action: string; value: number }[];
+  policy_accuracy?: number;
+  avg_reward?: number;
 }
 
 export interface ModelResult {
@@ -736,6 +782,17 @@ export interface ModelTrainBody {
   ensemble?: Record<string, unknown> | null;
   /** Manual building: fitting knobs (scaling, encoding, sampling, …). */
   fitting?: Record<string, unknown> | null;
+  /** Unsupervised clustering: cluster count + linkage. */
+  n_clusters?: number | null;
+  linkage?: string | null;
+  /** Semi-supervised: confidence threshold + base learner. */
+  threshold?: number | null;
+  base_estimator?: string | null;
+  /** Reinforcement: environment / learner hyperparameters. */
+  gamma?: number | null;
+  alpha?: number | null;
+  max_iterations?: number | null;
+  n_bins?: number | null;
   /** Async jobs only: retrain even when a cached run matches this config. */
   force?: boolean;
 }

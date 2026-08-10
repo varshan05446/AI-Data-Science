@@ -105,7 +105,7 @@ def predict_with_artifact(
         "inputs_used": {k: _py(v) if not isinstance(v, str) else v for k, v in row.items()},
     }
 
-    if task == "classification" and hasattr(pipe, "predict_proba"):
+    if task in ("classification", "semi_supervised") and hasattr(pipe, "predict_proba"):
         try:
             proba = np.asarray(pipe.predict_proba(frame))[0]
             labels = classes or [str(c) for c in getattr(pipe, "classes_", [])]
